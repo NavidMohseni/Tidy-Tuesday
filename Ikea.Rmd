@@ -1,0 +1,201 @@
+---
+title: "IKEA"
+author: "Navid M"
+date: "11/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+theme_set(theme_light())
+
+```
+
+
+```{r}
+tt <- tidytuesdayR::tt_load('2020-11-03')
+
+```
+
+```{r}
+ikea <- tt$ikea %>% 
+  select(-X1) %>% 
+  mutate(price_usd = 0.27 * price,
+         short_description = str_trim(str_replace_all(short_description, "\\+s", " "))
+         #short_description = str_squish(short_description))
+
+ikea %>% 
+  count(category, sort = TRUE) %>% 
+  mutate(category = fct_reorder(category, n)) %>% 
+  ggplot(aes(n, category)) +
+  geom_col() + 
+  labs(x = "# of items",
+       y = "",
+       title = "Most common categories of IKEA items")
+```
+```{r}
+ikea %>% 
+  mutate(category = fct_reorder(category, price)) %>% 
+  ggplot(aes(price, category)) + 
+  geom_boxplot() + 
+  #geom_jitter(width =  0 , height = 0.1, alpha = 0.25) +
+  scale_x_log10()
+  
+```
+```{r}
+library(glue)
+
+ikea %>% 
+  add_count(category, name = "category_total") %>% 
+  mutate(category = glue("{ category } ({ category_total })"),
+         category = fct_reorder(category, price_usd)) %>% 
+  ggplot(aes(price_usd, category)) + 
+  geom_boxplot() +
+  scale_x_log10(labels = dollar) + 
+  labs(x = "Price (USD)", 
+       y = "",
+       title = "How much do items in each category cost?")
+```
+```{r}
+library(ggridges)
+
+ikea %>% 
+  add_count(category, name = "category_total") %>% 
+  mutate(category = glue("{ category } ({ category_total })"),
+         category = fct_reorder(category, price_usd)) %>% 
+  ggplot(aes(price_usd, category)) + 
+  geom_density_ridges() +
+  scale_x_log10(labels = dollar) + 
+  labs(x = "Price (USD)", 
+       y = "",
+       title = "How much do items in each category cost?")
+
+```
+  
+```{r}
+ikea %>% 
+  add_count(category, name = "category_total") %>% 
+  mutate(category = glue("{ category } ({ category_total })"),
+         category = fct_reorder(category, price_usd)) %>% 
+  ggplot(aes(price_usd, category, fill = other_colors)) + 
+  geom_density_ridges(alpha = 0.5) +
+  scale_x_log10(labels = dollar) + 
+  labs(x = "Price (USD)", 
+       y = "",
+       title = "How much do items in each category cost?")
+```
+  
+```{r}
+ikea %>% 
+  mutate(name = fct_lump(name, 20)) %>% 
+  filter(name != "Other") %>% 
+  count(name, category, sort = TRUE) %>% 
+  mutate(name = fct_reorder(name, n, sum),
+         category = fct_reorder(category, n, sum)) %>% 
+  ggplot(aes(n, name, fill = category)) + 
+  geom_col() + 
+  scale_fill_discrete(guide = guide_legend(reverse = TRUE)) + 
+  labs(x = "# of items",
+       y = "Name of item")
+  
+```
+ 
+```{r}
+ikea %>% 
+  select(short_description) %>% 
+  separate(short_description, c("main_description", "rest"), 
+           sep = ", ", 
+           extra = "merge", 
+           fill = "right") %>% 
+  extract(rest, "numbers", "([\\d\\-xX]+) cm", remove = FALSE)
+
+```
+
+```{r}
+ikea %>% 
+  separate(short_description, c("main_description", "rest"), 
+           sep = ", ", 
+           extra = "merge", 
+           fill = "right",
+           remove = FALSE) %>% 
+  extract(rest, "description_cm", "([\\d\\-xX]+) cm", remove = FALSE) %>% 
+  unite(category_and_description, category, main_description, sep = " - ") %>% 
+  count(category_and_description, sort = TRUE)
+  
+
+```
+
+```{r}
+ikea %>% 
+  select(item_id, name, category, price_usd, short_description, width, height, depth) %>% 
+  mutate(volume_litters = height * width * depth / 1000) %>% 
+  filter(!is.na(volume_litters)) %>% 
+  arrange(desc(volume_litters)) %>% 
+  add_count(category, name = "category_total") %>% 
+  mutate(category = glue("{ category } ({ category_total })"),
+         category = fct_reorder(category, volume_litters)) %>% 
+  ggplot(aes(volume_litters, category)) + 
+  geom_boxplot() + 
+  scale_x_log10() + 
+  labs(x = "Volume litters", 
+       y = "", 
+       title = "Category by volume litters")
+```
+
+```{r}
+ikea %>% 
+  select(item_id, name, category, price_usd, short_description, width, height, depth) %>% 
+  mutate(volume_m3 = height * width * depth / 1e6) %>% 
+  filter(!is.na(volume_m3)) %>% 
+  arrange(desc(volume_m3)) %>% 
+  add_count(category, name = "category_total") %>% 
+  mutate(category = glue("{ category } ({ category_total })"),
+         category = fct_reorder(category, volume_m3)) %>% 
+  ggplot(aes(volume_m3, category)) + 
+  geom_boxplot() + 
+  scale_x_log10() + 
+  labs(x = "Volume m3", 
+       y = "", 
+       title = "Category by volume m3")
+```
+
+```{r}
+ikea %>% 
+  group_by(designer) %>% 
+  summarize(n_items = n(),
+            n_names = n_distinct(name),
+            n_categories = n_distinct(category)) %>% 
+  arrange(desc(n_names))
+
+```
+
+```{r}
+ikea_volume <- ikea %>% 
+  select(item_id, name, category, price_usd, short_description, width, height, depth) %>% 
+  mutate(volume_m3 = height * width * depth / 1e6) %>% 
+  filter(!is.na(volume_m3)) %>% 
+  arrange(desc(volume_m3)) %>% 
+  add_count(category, name = "category_total")
+```
+
+```{r}
+library(broom)
+
+ikea_volume %>% 
+  mutate(category = fct_relevel(category, "Tables and desks")) %>% 
+  lm(log2(price_usd) ~ log2(volume_m3) + category, data = .) %>% 
+  tidy(conf.int = TRUE) %>% 
+  filter(term != "(Intercept)") %>% 
+  mutate(term = fct_reorder(term, estimate)) %>% 
+  ggplot(aes(estimate, term)) + 
+  geom_point() + 
+  geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = .1) + 
+  geom_vline(xintercept = 0, color = "red", lty = 2) + 
+  labs(x = "Impact on Price")
+
+```
+

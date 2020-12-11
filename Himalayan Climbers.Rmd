@@ -1,0 +1,106 @@
+---
+title: "Analyzing Himalayan Climbers"
+author: "Navid M"
+date: "10/5/2020"
+output: html_document
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+theme_set(theme_light())
+```
+
+```{r}
+tt <- tt_load("2020-09-22")
+
+peaks <- tt$peaks %>% 
+  rename(height_meters = height_metres)
+
+peaks %>% 
+  arrange(desc(height_meters)) %>% 
+  head(20) %>% 
+  mutate(pick_name = fct_reorder(peak_name, height_meters)) %>% 
+  ggplot(aes(height_meters, pick_name, fill = climbing_status)) + 
+  geom_col() + 
+  labs(x = "Height (meters)",
+       y = "", 
+       title = "Tallest peaks in the Himalayas",
+       fill = "")
+```
+
+# Fractions of successful climbs per mountain, per year
+# Rate of Death over Time / per mountain (by members or hired members)
+# Death rate by mountain and age
+# Death causes and the rate of injury
+# Distribution of length of climbs
+# Correlation between frequency of expeditions and death rate 
+
+```{r}
+expeditions <- tt$expeditions
+peaks_summarized <- expeditions %>% 
+  group_by(peak_id ,peak_name) %>% 
+  summarize(n_climbs = n(),
+            across(members:hired_staff_deaths, sum),
+            first_climb = min(year)) %>%
+  ungroup() %>% 
+  arrange(desc(n_climbs)) %>% 
+  mutate(pct_death = member_deaths / members,
+         pct_hired_staff_deaths = hired_staff_deaths / hired_staff) %>% 
+  inner_join(peaks %>% select(peak_id, height_meters), by = "peak_id")
+
+peaks_summarized
+```
+
+What are the deadliest mountains?
+
+```{r}
+peaks_summarized %>%
+  filter(members >= 100) %>% 
+  arrange(desc(pct_death))
+```
+
+```{r}
+devtools::install_github("dgrtwo/ebbr")
+library(ebbr)
+
+peaks_eb <- peaks_summarized %>%
+  filter(members >= 20) %>% 
+  arrange(desc(pct_death)) %>% 
+  add_ebb_estimate(member_deaths, members)
+
+peaks_eb %>%
+  ggplot(aes(pct_death, .fitted)) +
+  geom_point(aes(color = members)) +
+  geom_abline(color = "red") + 
+  scale_x_continuous(labels = percent) + 
+  scale_y_continuous(labels = percent) + 
+  scale_color_continuous(trans = "log10") + 
+  labs(x = "Death rate (row)",
+       y = "Death rate (empirical Bayes adjusted)")
+
+
+
+
+```
+
+```{r}
+peaks_eb %>% 
+  arrange(desc(.fitted)) %>% 
+  head(20) %>% 
+  mutate(peak_name = fct_reorder(peak_name, .fitted)) %>% 
+  ggplot(aes(.fitted, peak_name)) + 
+  geom_col() + 
+  geom_errorbarh(aes(xmin = .low, xmax = .high, color = "red")) + 
+  expand_limits(x = 0) + 
+  scale_x_continuous(labels = percent) + 
+  labs(x = "Death rate (empirical Bayes adjusted + 95% credible interval)",
+       y = "")
+
+
+```
+
+
