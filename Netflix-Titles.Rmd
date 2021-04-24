@@ -1,0 +1,240 @@
+---
+title: "Netflix Titles"
+author: "Navid Mohseni"
+date: "4/24/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Part One Analysis
+## Julia Silge
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, cache.lazy = TRUE, 
+                      warning = FALSE, message = FALSE, dpi = 180, 
+                      fig.width = 8, fig.height = 5)
+library(tidyverse)
+library(silgelib)
+theme_set(theme_plex())
+```
+
+Let's build a model for [Netflix titles](https://github.com/rfordatascience/tidytuesday/blob/master/data/2021/2021-04-20/readme.md). We can build a model whether a title is a TV show or a movie based on its description. 
+
+```{r}
+netflix_titles <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-20/netflix_titles.csv')
+```
+
+
+Let's see how many Movie or Tv Show we have.
+```{r}
+netflix_titles %>% 
+  count(type)
+```
+
+It seems that Moives are much larger than TV Shows.
+
+Ok. Let's see the description.
+```{r}
+netflix_titles %>% 
+  slice_sample(n = 10) %>% 
+  pull(description)
+```
+
+
+```{r}
+library(tidytext)
+
+netflix_titles %>% 
+  unnest_tokens(word, description) %>% 
+  anti_join(get_stopwords()) %>% 
+  count(type, word, sort = TRUE) %>% 
+  group_by(type) %>% 
+  slice_max(n , n = 15) %>% 
+  ungroup() %>% 
+  mutate(word = reorder_within(word, n, type)) %>% 
+  ggplot(aes(x = n, y = word, fill = type)) + 
+  geom_col(show.legend = FALSE, alpha = 0.8) + 
+  scale_y_reordered() + 
+  facet_wrap(~type, scales = "free") +
+  labs(x = "Word Frequency", y = NULL)
+  
+```
+
+"life" is a common word in movies! and even in TV shows.
+
+# Building a Model
+
+Let's build  a model to distinguish the type by its description.
+We can start by loading the tidymodels metapackage, splitting our data into training and testing sets, and creating cross-validation samples. Think about this stage as spending your data budget.
+```{r}
+library(tidymodels)
+
+set.seed(123)
+netflix_split <- netflix_titles %>% 
+  select(type, description) %>% 
+  initial_split(strata = type)
+
+netflix_train <- training(netflix_split)
+netflix_test <- testing(netflix_split)
+
+set.seed(234)
+netflix_folds <- vfold_cv(netflix_train, strata = type)
+netflix_folds
+```
+
+```{r}
+library(textrecipes)
+library(themis)
+
+netflix_rec <- recipe(type ~ description,
+                      data = netflix_train) %>% 
+  step_tokenize(description) %>% 
+  step_tokenfilter(description, max_tokens = 1e3) %>% 
+  step_tfidf(description) %>% 
+  step_normalize(all_numeric_predictors()) %>% 
+  step_smote(type)
+
+svm_spec <- svm_poly() %>% 
+  set_mode("classification") %>% 
+  set_engine("kernlab")
+
+netflix_wf <- workflow() %>% 
+  add_recipe(netflix_rec) %>% 
+  add_model(svm_spec)
+
+netflix_wf
+
+```
+
+```{r}
+doParallel::registerDoParallel()
+
+set.seed(123)
+
+svm_rs <- fit_resamples(
+  netflix_wf, 
+  netflix_folds,
+  metrics = metric_set(accuracy, recall, precision),
+  control = control_resamples(save_pred = TRUE)
+)
+ 
+collect_metrics(svm_rs) 
+```
+
+```{r}
+svm_rs %>% 
+  conf_mat_resampled(tidy = FALSE) %>% 
+  autoplot()
+```
+
+
+
+
+# Fit and evaluate the final model
+
+Next, let’s fit our model on last time to the whole training set at once (rather than resampled data) and evaluate on the testing set. This is the first time we have touched the testing set.
+
+
+```{r}
+final_fitted <- last_fit(
+  netflix_wf,
+  netflix_split,
+  metrics = metric_set(accuracy, recall, precision)
+)
+collect_metrics(final_fitted)
+```
+
+
+
+# Part two 
+## David Robinson
+
+```{r}
+netflix_titles %>% 
+  ggplot(aes(release_year, fill = type)) + 
+  geom_histogram(binwidth = 5) + 
+  facet_wrap(~type, ncol = 1, scales = "free_y") 
+```
+ncol = 1, we made the charts to lay about each other.
+
+
+Let's make a decade!
+```{r}
+netflix_titles %>% 
+  count(decade = 10*(release_year %/% 10), type) %>% 
+  group_by(type) %>% 
+  mutate(percent = n/sum(n)) %>% 
+  ggplot(aes(decade, percent, color = type)) + 
+  geom_line()
+```
+
+Let's delve into duration
+```{r}
+
+library(lubridate)
+
+netflix_titles <- netflix_titles %>% 
+  separate(duration, c("duration", "duration_units"), sep = " ", 
+           convert = TRUE) %>% 
+  mutate(date_added = mdy(date_added),
+         year_added = year(date_added))
+
+netflix_titles %>% 
+  filter(type == "Movie") %>% 
+  mutate(decade = 10*(release_year %/% 10)) %>% 
+  ggplot(aes(x = decade, y = duration, group = decade)) + 
+  geom_boxplot()
+```
+
+It is time to explore genre.
+```{r}
+netflix_titles %>% 
+  separate_rows(listed_in, sep = ", ") %>% 
+  group_by(type, genre = listed_in) %>% 
+  summarize(n = n(),
+            median_duration = median(duration)) %>% 
+  arrange(desc(n)) %>% 
+  filter(type == "Movie") %>% 
+  filter(genre != "Movies") %>% 
+  mutate(genre = fct_reorder(genre, median_duration)) %>% 
+  ggplot(aes(median_duration, genre)) + 
+  geom_col()
+```
+
+
+
+```{r}
+netflix_titles %>% 
+  filter(!is.na(country)) %>% 
+  count(country = fct_lump(country, 9), 
+        type, 
+        sort = TRUE) %>% 
+  mutate(country = fct_reorder(country, n)) %>% 
+  ggplot(aes(n, country, fill = type)) + 
+  geom_col()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
