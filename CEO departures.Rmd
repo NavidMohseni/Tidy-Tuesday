@@ -1,0 +1,101 @@
+---
+title: "CEO departures"
+author: "Navid Mohseni"
+date: "5/2/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, cache.lazy = FALSE, 
+                      warning = FALSE, message = FALSE, dpi = 180, fig.width = 8,
+                      fig.height = 5)
+library(knitr)
+library(tidyverse)
+library(silgelib)
+theme_set(theme_plex())
+```
+
+Let's build a model for [CEO departures](https://github.com/rfordatascience/tidytuesday/blob/master/data/2021/2021-04-27/readme.md). We can build a model to estimate how involuntary departures are changing.
+
+## Explore Data
+departures <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-27/departures.csv')
+
+```{r}
+departures <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-04-27/departures.csv')
+```
+
+```{r}
+departures %>% count(departure_code)
+
+departures %>% 
+  filter(departure_code < 9, 
+         fyear > 1995, fyear < 2019) %>% 
+  mutate(involuntary = if_else(departure_code %in% 3:4, "involuntary", "other")) %>% 
+  count(fyear, involuntary) %>% 
+  ggplot(aes(fyear, n, color = involuntary)) + 
+  geom_line(size = 1.2, alpha = 0.5) + 
+  geom_point(size = 2) + 
+  geom_smooth(method = "lm", lty = 2) +
+  scale_y_continuous(limits = c(0, NA)) + 
+  labs(x = NULL, y = "Number of CEO departures", color = NULL)
+  
+```
+
+
+```{r}
+dept <- departures %>% 
+  filter(departure_code < 9, 
+         fyear > 1995, fyear < 2019) %>% 
+  mutate(involuntary = if_else(departure_code %in% 3:4, "involuntary", "other"))
+
+df <- dept %>% 
+  count(fyear, involuntary) %>% 
+  pivot_wider(names_from = involuntary, values_from = n)
+
+library(broom)
+mod <- glm(cbind(involuntary, other) ~ fyear, data = df, family = "binomial")
+tidy(mod, exponentiate = TRUE)
+```
+
+Let's use resampling (Bootstrap)
+
+```{r}
+library(rsample)
+
+set.seed(123)
+
+ceo_folds <- bootstraps(dept, times = 1e3)
+ceo_folds
+
+fit_binom <- function(split) {
+  
+  df <- analysis(split) %>% 
+  count(fyear, involuntary) %>% 
+  pivot_wider(names_from = involuntary, values_from = n)
+  
+  mod <- glm(cbind(involuntary, other) ~ fyear, data = df, family = "binomial")
+  tidy(mod, exponentiate = TRUE)
+}
+
+```
+
+
+```{r}
+boot_models <- ceo_folds %>% 
+  mutate(coef_info = map(splits, fit_binom))
+```
+
+```{r}
+intervals <- int_pctl(boot_models, coef_info)
+boot_models %>% 
+  unnest(coef_info) %>% 
+  filter(term == "fyear") %>% 
+  ggplot(aes(estimate)) + 
+  geom_vline(xintercept = 1, lty = 2, color = "gray50", size = 2) + 
+  geom_histogram(alpha = 0.8, fill = "midnightblue")
+
+```
+
+
